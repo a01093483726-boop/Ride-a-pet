@@ -43,44 +43,20 @@ uiCorner.Parent = toggleButton
 
 -- 상태 변수
 local isESPOn = false
-local espCache = {}
+local espCache = {} -- [핵심] 이미 생성된 알 모델/파츠를 기록하는 표
 
-local function createESP(targetPart, eggName)
-    if espCache[targetPart] then return end
-    
-    local bill = Instance.new("BillboardGui")
-    bill.Name = "EggESP_Tag"
-    bill.Size = UDim2.new(0, 180, 0, 40)
-    bill.AlwaysOnTop = true
-    bill.Adornee = targetPart
-    bill.StudsOffset = Vector3.new(0, 2, 0) -- 알 살짝 위쪽에 깔끔하게 뜨도록 위치 조정
-    bill.Parent = ScreenGui
-    
-    local textLabel = Instance.new("TextLabel")
-    textLabel.Size = UDim2.new(1, 0, 1, 0)
-    textLabel.BackgroundTransparency = 1
-    textLabel.TextColor3 = Color3.fromRGB(255, 230, 0) -- 선명한 노란색
-    textLabel.TextStrokeTransparency = 0
-    textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-    textLabel.TextSize = 14
-    textLabel.Font = Enum.Font.GothamBold
-    textLabel.Parent = bill
-    
-    espCache[targetPart] = {Bill = bill, Label = textLabel}
-end
-
-local function removeESP(targetPart)
-    if espCache[targetPart] then
-        if espCache[targetPart].Bill then
-            espCache[targetPart].Bill:Destroy()
+local function removeESP(target)
+    if espCache[target] then
+        if espCache[target].Bill then
+            espCache[target].Bill:Destroy()
         end
-        espCache[targetPart] = nil
+        espCache[target] = nil
     end
 end
 
 -- 모든 ESP 태그 강제 청소
 local function clearAllESP()
-    for part, data in pairs(espCache) do
+    for target, data in pairs(espCache) do
         if data.Bill then
             data.Bill:Destroy()
         end
@@ -105,42 +81,89 @@ toggleButton.MouseButton1Click:Connect(function()
     end
 end)
 
--- [2] 매 프레임 알 감지 및 겹침 방지 정밀 탐색
+-- [2] 매 프레임 알 감지 및 완벽한 중복 차단 탐색
 _G.RideAPetEggESPConnection = RunService.RenderStepped:Connect(function()
     if not isESPOn then return end
 
     local char = LocalPlayer.Character
     local rootPart = char and char:FindFirstChild("HumanoidRootPart")
     
-    -- 이미 등록된 알들 상태 체크 및 갱신
-    for obj, data in pairs(espCache) do
-        if not obj or not obj.Parent or not obj:IsA("BasePart") then
-            removeESP(obj)
+    -- 이미 등록된 알들 거리 갱신 및 사라짐 체크
+    for target, data in pairs(espCache) do
+        if not target or not target.Parent then
+            removeESP(target)
         else
             if rootPart then
-                local distance = (rootPart.Position - obj.Position).Magnitude
+                local pos = target:IsA("Model") and target:GetPivot().Position or target.Position
+                local distance = (rootPart.Position - pos).Magnitude
                 if distance < 3000 then
                     local distMeters = math.floor(distance / 3.5)
-                    -- 오직 알 이름과 거리만 깔끔하게 출력
-                    data.Label.Text = "🥚 " .. obj.Name .. " (" .. distMeters .. "m)"
+                    data.Label.Text = "🥚 " .. target.Name .. " (" .. distMeters .. "m)"
                 else
-                    removeESP(obj)
+                    removeESP(target)
                 end
             end
         end
     end
 
-    -- 새로운 알 탐색 (중복 생성 방지 필터링 강화)
+    -- 새로운 알 탐색 (파츠 단위가 아니라 '알 모델(Model)' 단위로 묶어서 중복 방지)
     for _, obj in pairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") then
+        -- 알이 보통 Model로 묶여있거나 파트로 되어있을 때 판정
+        if obj:IsA("Model") or obj:IsA("BasePart") then
             local lowerName = string.lower(obj.Name)
             
-            -- 알(Egg)이 확실하고, 중복 모델 파츠가 아닌 메인 파츠 위주로 엄선
-            if string.find(lowerName, "egg") and not espCache[obj] then
-                if rootPart then
-                    local distance = (rootPart.Position - obj.Position).Magnitude
-                    if distance < 3000 then
-                        createESP(obj, obj.Name)
+            -- 이름에 "egg"가 들어가고, 플레이어가 아닐 경우
+            if string.find(lowerName, "egg") then
+                -- 플레이어 캐릭터 내부가 아닐 때만
+                local isPlayer = false
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p.Character and obj:IsDescendantOf(p.Character) then
+                        isPlayer = true
+                        break
+                    end
+                end
+                
+                -- 만약 아직 등록되지 않은 알이라면 딱 1개만 생성!
+                if not isPlayer and not espCache[obj] then
+                    -- 부모 모델이 이미 등록되어 있는지 체크 (중복 생성 방지의 핵심)
+                    local alreadyHasParent = false
+                    if obj:IsA("BasePart") and obj.Parent and obj.Parent:IsA("Model") then
+                        if espCache[obj.Parent] then
+                            alreadyHasParent = true
+                        end
+                    end
+                    
+                    if not alreadyHasParent then
+                        if rootPart then
+                            local pos = obj:IsA("Model") and obj:GetPivot().Position or obj.Position
+                            local distance = (rootPart.Position - pos).Magnitude
+                            
+                            if distance < 3000 then
+                                local targetAdornee = obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildOfClass("BasePart")) or obj
+                                
+                                if targetAdornee then
+                                    local bill = Instance.new("BillboardGui")
+                                    bill.Name = "EggESP_Tag"
+                                    bill.Size = UDim2.new(0, 160, 0, 30)
+                                    bill.AlwaysOnTop = true
+                                    bill.Adornee = targetAdornee
+                                    bill.StudsOffset = Vector3.new(0, 2.5, 0)
+                                    bill.Parent = ScreenGui
+                                    
+                                    local textLabel = Instance.new("TextLabel")
+                                    textLabel.Size = UDim2.new(1, 0, 1, 0)
+                                    textLabel.BackgroundTransparency = 1
+                                    textLabel.TextColor3 = Color3.fromRGB(255, 230, 0)
+                                    textLabel.TextStrokeTransparency = 0
+                                    textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                                    textLabel.TextSize = 13
+                                    textLabel.Font = Enum.Font.GothamBold
+                                    textLabel.Parent = bill
+                                    
+                                    espCache[obj] = {Bill = bill, Label = textLabel}
+                                end
+                            end
+                        end
                     end
                 end
             end
@@ -148,4 +171,4 @@ _G.RideAPetEggESPConnection = RunService.RenderStepped:Connect(function()
     end
 end)
 
-print("겹침 방지 및 알 이름 중심 ESP 스크립트 로드 완료!")
+print("알 1개당 텍스트 1개만 뜨도록 최적화된 ESP 완료!")
