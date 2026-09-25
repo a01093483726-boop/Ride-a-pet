@@ -1,0 +1,140 @@
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local LocalPlayer = Players.LocalPlayer
+
+-- 기존에 실행 중이던 ESP 연결 및 GUI가 있다면 초기화
+if _G.RideAPetESPConnection then
+    _G.RideAPetESPConnection:Disconnect()
+    _G.RideAPetESPConnection = nil
+end
+
+pcall(function()
+    if CoreGui:FindFirstChild("RideAPetESPContainer") then
+        CoreGui.RideAPetESPContainer:Destroy()
+    end
+end)
+
+-- 죽어도 안 사라지게 CoreGui 및 ResetOnSpawn 처리
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "RideAPetESPContainer"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = CoreGui
+
+-- [1] 우측 상단 ON/OFF 스위치 버튼 생성
+local toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0, 110, 0, 45)
+toggleButton.Position = UDim2.new(0.85, 0, 0.12, 0)
+toggleButton.BackgroundColor3 = Color3.fromRGB(80, 20, 20)
+toggleButton.BorderSizePixel = 2
+toggleButton.BorderColor3 = Color3.fromRGB(255, 255, 255)
+toggleButton.Text = "ESP: OFF\n(알 & 오브젝트)"
+toggleButton.TextColor3 = Color3.fromRGB(255, 60, 60)
+toggleButton.TextSize = 10
+toggleButton.Font = Enum.Font.GothamBold
+toggleButton.Active = true
+toggleButton.Draggable = true -- 버튼을 드래그해서 위치 이동 가능!
+toggleButton.Parent = ScreenGui
+
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 8)
+uiCorner.Parent = toggleButton
+
+-- 상태 변수
+local isESPOn = false
+local espCache = {}
+
+local function createESP(targetPart, color)
+    if espCache[targetPart] then return end
+    
+    local bill = Instance.new("BillboardGui")
+    bill.Name = "ESP_Tag"
+    bill.Size = UDim2.new(0, 200, 0, 50)
+    bill.AlwaysOnTop = true
+    bill.Adornee = targetPart
+    bill.Parent = ScreenGui
+    
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.TextColor3 = color
+    textLabel.TextStrokeTransparency = 0
+    textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    textLabel.TextSize = 13
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.Parent = bill
+    
+    espCache[targetPart] = {Bill = bill, Label = textLabel}
+end
+
+local function removeESP(targetPart)
+    if espCache[targetPart] then
+        if espCache[targetPart].Bill then
+            espCache[targetPart].Bill:Destroy()
+        end
+        espCache[targetPart] = nil
+    end
+end
+
+-- 모든 ESP 태그를 강제로 청소하는 함수
+local function clearAllESP()
+    for part, data in pairs(espCache) do
+        if data.Bill then
+            data.Bill:Destroy()
+        end
+    end
+    espCache = {}
+end
+
+-- 버튼 클릭 시 ON / OFF 토글 제어
+toggleButton.MouseButton1Click:Connect(function()
+    isESPOn = not isESPOn
+    if isESPOn then
+        toggleButton.Text = "ESP: ON\n(알 & 오브젝트)"
+        toggleButton.TextColor3 = Color3.fromRGB(60, 255, 60)
+        toggleButton.BackgroundColor3 = Color3.fromRGB(20, 80, 20)
+        print("Ride a Pet ESP 켜짐")
+    else
+        toggleButton.Text = "ESP: OFF\n(알 & 오브젝트)"
+        toggleButton.TextColor3 = Color3.fromRGB(255, 60, 60)
+        toggleButton.BackgroundColor3 = Color3.fromRGB(80, 20, 20)
+        clearAllESP() -- 꺼졌을 때 화면에 남아있는 태그들 싹 지우기
+        print("Ride a Pet ESP 꺼짐")
+    end
+end)
+
+-- [2] 매 프레임 탐색 및 표시 로직 (스위치가 켜져 있을 때만 작동)
+_G.RideAPetESPConnection = RunService.RenderStepped:Connect(function()
+    if not isESPOn then return end
+
+    local char = LocalPlayer.Character
+    local rootPart = char and char:FindFirstChild("HumanoidRootPart")
+    
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            local lowerName = string.lower(obj.Name)
+            
+            -- 알(Egg), 네스트, 상호작용 프롬프트가 포함된 대상 탐색
+            if string.find(lowerName, "egg") or string.find(lowerName, "nest") or obj:FindFirstChildOfClass("ProximityPrompt") then
+                
+                if rootPart then
+                    local distance = (rootPart.Position - obj.Position).Magnitude
+                    
+                    if distance < 2000 then
+                        createESP(obj, Color3.fromRGB(0, 255, 255))
+                        
+                        if espCache[obj] then
+                            local distMeters = math.floor(distance / 3.5)
+                            espCache[obj].Label.Text = "🥚 " .. obj.Name .. "\n(" .. distMeters .. "m)"
+                        end
+                    else
+                        removeESP(obj)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+print("스위치가 포함된 Ride a Pet ESP 스크립트 로드 완료!")
